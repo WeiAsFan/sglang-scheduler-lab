@@ -1,0 +1,35 @@
+{
+  "beta": [
+    13.914036973858101,
+    0.1104622272189974,
+    1.1218222644648793e-05
+  ],
+  "unit": "ms",
+  "formula": "b0+b1*R+b2*(H*R+R*(R+1)/2)",
+  "config": {
+    "model_path": "/mnt_d/huangxiaoyuan/sglang-scheduler-lab-v1.0/models/Qwen2.5-7B-Instruct",
+    "tp_size": 1,
+    "dtype": "bfloat16",
+    "context_length": 20480,
+    "mem_fraction_static": 0.8,
+    "max_total_tokens": 131072,
+    "chunked_prefill_size": 2048,
+    "max_prefill_tokens": 8192,
+    "max_running_requests": 64,
+    "attention_backend": "triton",
+    "sampling_backend": "pytorch",
+    "host": "127.0.0.1",
+    "port": 30026,
+    "schedule_policy": "fcfs",
+    "schedule_candidate_limit": 64,
+    "schedule_aging_threshold_ms": 500,
+    "schedule_trace_dir": "/mnt_d/huangxiaoyuan/sglang-scheduler-lab-v1.0/runs/calibration-a6000-r1",
+    "disable_overlap_schedule": true
+  },
+  "source_run": "runs/calibration-a6000-r1",
+  "train_samples": 240,
+  "holdout_samples": 80,
+  "holdout_mae_ms": 3.1652056620523092,
+  "holdout_spearman": 0.9683271643188193,
+  "timing": "CUDA events around ModelRunner.forward; isolated; overlap disabled"
+}
