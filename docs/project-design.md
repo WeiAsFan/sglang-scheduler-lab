@@ -1,12 +1,12 @@
 # SGLang 调度实验：项目设计
 
-更新日期：2026-09-10。本文把已认可的策略方向细化为实现与实验设计；所有配置值均未经过远程服务器实测。执行顺序见[实现计划](implementation-plan.md)，术语以[共同语言](../CONTEXT.md)为准，原生行为的依据见[调研文档](scheduling-research.md)。
+更新日期：2026-09-10。本文把已认可的策略方向细化为实现与实验设计；当前配置已用于远程阶段性实验；最优参数和大样本结论尚未确定。执行顺序见[实现计划](implementation-plan.md)，术语以[共同语言](../CONTEXT.md)为准，原生行为的依据见[调研文档](scheduling-research.md)。
 
 ## 实现落地说明
 
 四种候选已由 `patches/scheduler.patch` 实现，操作入口见 [Linux 手册](operations-linux.md)。实现增加一个无 GPU 依赖的 `scheduler_lab.py` 供排序与记录共用；现有 Req 对象新增本轮序号属性，时间复用 `wait_queue_entry_time`。记录在内存中保留，通过运行结束前查询 `/server_info` 导出。
 
-GPU 标定包住 `ModelRunner.forward`，使用当前 stream 的 CUDA events 并同步结束 event，独占请求且关闭 overlap；正式性能运行保持默认 overlap。这样可以明确请求与分块前向计时的归属，但模型只是独占成本代理，不能代替在线比较。该差异写入成本 JSON 和运行配置。真实 GPU 接入、安装兼容性和成本系数仍待服务器验证。
+GPU 标定包住 `ModelRunner.forward`，使用当前 stream 的 CUDA events 并同步结束 event，独占请求且关闭 overlap；正式性能运行保持默认 overlap。这样可以明确请求与分块前向计时的归属，但模型只是独占成本代理，不能代替在线比较。该差异写入成本 JSON 和运行配置。真实 GPU 接入和成本标定已执行，实际环境见 [环境记录](environment.md)，结论与未完成项见 [实验进度](experiment-status.md)。标定耗时准确不等于在线排序收益。
 
 ## 1. 项目目标与交付
 
@@ -26,14 +26,14 @@ GPU 标定包住 `ModelRunner.forward`，使用当前 stream 的 CUDA events 并
 | --- | --- | --- |
 | 服务器 GPU | 单卡 A6000 | 用户已提供 |
 | 驱动 | `580.173.02` | 用户已提供 |
-| CUDA | `12.9` | 用户已提供；准备阶段分别记录 Toolkit 与 PyTorch 构建版本 |
-| GPU 规格 | 按 NVIDIA RTX A6000 的 Ampere、48 GB 规格设计 | 官方产品规格；不是可用显存实测值 |
+| CUDA | 驱动能力 13.0；PyTorch 构建 12.9；nvcc 12.1.105 | 已分别报告 |
+| GPU 规格 | NVIDIA RTX A6000，49140 MiB | 已报告；不等于每次运行可用显存 |
 | 并行方式 | `TP=1`，单服务实例 | 本项目确定的范围 |
-| 主模型 | `Qwen/Qwen2.5-7B-Instruct` | 设计默认值，尚未下载或运行 |
-| Python | 优先复用兼容的现有环境；新环境优先 Python 3.11 | 待服务器记录 |
+| 主模型 | `Qwen/Qwen2.5-7B-Instruct` | 已复制到项目模型目录并完成运行 |
+| Python | 3.12.8 | 当前项目 .venv 实际使用版本 |
 | CPU、内存、Linux 发行版、磁盘、已有模型 | 未提供 | 准备阶段记录 |
 
-RTX A6000 的产品规格支持上述显存与架构假设。[NVIDIA 产品页][ref-gpu] 驱动 `580.173.02` 高于 CUDA 12.9 Update 1 所列的 Linux 驱动版本 `575.57.08`，本项目不以升级驱动为前提；具体 Python 包与内核组合仍需在实际环境运行。[CUDA 12.9 发行说明][ref-cuda]
+RTX A6000 的产品规格支持上述显存与架构假设。[NVIDIA 产品页][ref-gpu] 驱动 `580.173.02` 高于 CUDA 12.9 Update 1 所列的 Linux 驱动版本 `575.57.08`，本项目不以升级驱动为前提；当前 Triton/PyTorch 组合已实际运行，依赖元数据差异仍保留在环境记录中。[CUDA 12.9 发行说明][ref-cuda]
 
 保留上次调研提交 `0027af2eace5ccc2116c8c993ce71aebf1535264` 作为初始源码基线。该版本的默认依赖已经包含 CUDA 13 组件，离线准备应采用其文档提供的 CUDA 12／`cu129` 路径，不能在服务器上直接照搬默认联网安装命令。[固定版本安装说明][ref-install] [固定版本依赖声明][ref-deps]
 
@@ -47,7 +47,7 @@ Qwen2.5-7B-Instruct 使用常规因果注意力，官方配置为 28 层、4 个
 
 ### 启动参数起点
 
-以下是配置文件将保存的初始值；首轮容量观察后，只调整有实际原因的项，再用于全部策略。
+以下是当前阶段性实验使用的配置。后续改变模型、后端或容量时，同一比较组统一调整，并保存实际解析值。
 
 | 参数字段 | 初始值 | 用途 |
 | --- | --- | --- |
@@ -61,12 +61,13 @@ Qwen2.5-7B-Instruct 使用常规因果注意力，官方配置为 28 层、4 个
 | `chunked_prefill_size` | `2048` | 固定分块设置 |
 | `max_prefill_tokens` | `8192` | 固定该配置值；实际批量还受引擎解析、上下文和分块约束，不把它当作所有路径的硬上界 |
 | `max_running_requests` | `64` | 固定运行请求上限，不等于客户端并发上限 |
-| `attention_backend` | 优先 `flashinfer` | 若实际包组合不适配，可统一采用 `triton` 并重测基线 |
+| `attention_backend` | `triton` | 已用于当前所有正常对照 |
+| `sampling_backend` | `pytorch` | 与当前 attention 后端配套固定 |
 | radix cache | 开启 | 获得真实前缀复用 |
 | overlap、CUDA Graph | 保持该版本正常启用设置并记录解析值 | 保留常规服务执行方式 |
 | mixed chunk、HiCache、业务优先级 | 不启用 | 收敛实验变量 |
 
-官方后端说明将 FlashInfer 列为 Ampere 常规注意力的默认选择之一，Triton 可作替代。[注意力后端说明][ref-attention] 是否有对应离线 wheel 或 JIT 编译依赖，属于安装准备内容，不在本文假定已经具备。
+官方后端说明将 FlashInfer 列为 Ampere 常规注意力的默认选择之一，Triton 可作替代。[注意力后端说明][ref-attention] 当前 FlashInfer JIT 与 nvcc 12.1 的参数不兼容，已统一采用 Triton；不再把 FlashInfer 当作当前实验默认后端。
 
 主性能负载使用流式输出、`temperature=0`、`max_new_tokens=128`、`ignore_eos=true`，形成固定生成长度的合成实验；同时记录实际输出量。少量真实文本正确性观察使用正常 EOS 行为，二者分开报告。
 
@@ -226,7 +227,7 @@ JSON 产物保存系数、毫秒单位、模型名称、实际运行配置和标
 
 机制筛选先比较四个原生策略和前三个候选，在 `prefix-conflict` 与 `long-wait` 上各做一次探索，约 14 次运行。成本模型完成后增加与 `aged-remaining` 的成对实验。
 
-正式主比较使用四个原生策略加一个最终候选，在两个事先选定的代表负载、两个固定请求率和三个独立轨迹种子上运行，约 60 次。最终候选与参数在主比较前确定；所有被实现的候选都在消融表或探索记录中呈现。
+以下大样本主比较尚未执行；当前只完成两个负载的探索和 prefix 的三种子、每轮 300 请求重复。计划中的正式主比较使用四个原生策略加一个最终候选，在两个事先选定的代表负载、两个固定请求率和三个独立轨迹种子上运行，约 60 次。最终候选与参数在主比较前确定；所有被实现的候选都在消融表或探索记录中呈现。
 
 有界候选使用同一策略的全队列版本与 `K=32／64／128` 对照。`τ_ms` 依据独立探索阶段 FCFS 的等待分布选三档；一次只改变一个因素。另在一个代表负载比较分块大小 2048 与 4096，改变分块时一起重跑相关基线。
 
@@ -306,11 +307,12 @@ sglang-scheduler-lab/
     scheduling.csv
     server.log
     summary.json
-  results/
+  results/YYYYMMDD/         # 整理／回传当天日期，例如 20260910
+    README.md
     calibration/
     comparison.csv
     figures/
-    interview-notes.md
+    raw/<run_id>.tar.gz     # 保留 runs/<run_id>/ 完整目录
   upstream/                 # 完整 SGLang 工作副本，不提交
 ```
 
