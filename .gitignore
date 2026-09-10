@@ -2,5 +2,11 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
 /models/
 /upstream/
+/.prepare-venv/
+/offline/
+/workloads/
+/runs/
+/received/

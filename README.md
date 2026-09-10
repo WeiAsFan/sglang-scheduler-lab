@@ -2,7 +2,7 @@
 
 `sglang-scheduler-lab` 是面向 **AI 推理系统工程师面试**的小型推理优化项目：比较 SGLang 原生请求排序策略与基于剩余 prefill 工作量、等待时间的候选策略，量化短请求首 token 延迟、长请求等待、吞吐和调度 CPU 开销之间的取舍。
 
-当前已完成源码调研、术语定义、项目设计和实现计划；候选策略尚未实现，尚无真实 GPU 性能结论。
+当前已实现四种候选排序策略、上游接入补丁、五类固定轨迹、流式回放、GPU 标定采集与拟合、逐轮分析工具，并完成本地 CPU 正确性检查。尚未在远程 A6000 安装或运行，尚无真实 GPU 性能结论。
 
 ## 文档
 
@@ -10,11 +10,17 @@
 - [调度策略调研](docs/scheduling-research.md)：原生策略、源码依据、候选方案、实验设计和面试讲解重点。
 - [项目设计](docs/project-design.md)：策略规则、SGLang 接入方式、A6000 初始配置、成本标定和结果记录。
 - [实现计划](docs/implementation-plan.md)：工作顺序、各阶段交付物、验证方式和单卡实验预算。
+- [Linux 操作手册](docs/operations-linux.md)：登录设备下载与传输、服务器离线安装、策略比较、标定、分析和产物回传。
+- [本地验证记录](docs/local-validation.md)：已验证的代码行为和仍需服务器验证的部分。
 - [协作约定](AGENTS.md)：中文沟通、开发范围和实验约束。
 
 ## 已确认方向
 
 核心原生对照为 `fcfs`、`lpm`、`dfs-weight`、`hrrn`；逐步实现原始输入短优先、未缓存 token 少优先、等待超阈值提升，以及经过标定的耗时估计变体。
+
+实现位于 [scheduler.patch](patches/scheduler.patch)，应用到 [upstream-base.txt](patches/upstream-base.txt) 指定的完整源码。新增模块随补丁进入 SGLang；支持性仓库不另存一份重复调度实现。`aged-cost` 需要服务器实测拟合的 JSON，仓库不提供预置假系数。
+
+从 [操作手册第 2 节](docs/operations-linux.md#2-登录设备确认安装包目标) 开始准备离线环境。已有可用服务器环境时，按第 5 节应用补丁，再执行第 6 节的首轮真实基线。
 
 用户已认可上述策略方向。`aged-lpm`、`hrrn-time` 保留为有具体分析需要时再做的补充变体。
 

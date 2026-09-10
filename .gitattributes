@@ -1,0 +1,6 @@
+# 跨 Windows / Linux 传输时保留源码和参数文件的 LF。
+*.py text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+# 补丁中的空白上下文行有语法意义，按原始字节保存。
+*.patch -text -whitespace

@@ -1,0 +1,433 @@
+diff --git a/python/sglang/srt/arg_groups/fields/schedule.py b/python/sglang/srt/arg_groups/fields/schedule.py
+index bee8e21..db62bdd 100644
+--- a/python/sglang/srt/arg_groups/fields/schedule.py
++++ b/python/sglang/srt/arg_groups/fields/schedule.py
+@@ -83,6 +83,10 @@ class Schedule:
+         Optional[int],
+         "The maximum number of requests in a prefill batch. If not specified, there is no limit.",
+     ] = None
++    schedule_candidate_limit: A[int, "额外评分候选上限，0 表示全部"] = 64
++    schedule_aging_threshold_ms: A[float, "等待提升阈值，单位 ms"] = 500.0
++    schedule_cost_model: A[Optional[str], "aged-cost 成本模型 JSON"] = None
++    schedule_trace_dir: A[Optional[str], "单卡实验记录目录，查询 server_info 时导出"] = None
+     schedule_policy: A[
+         str,
+         Arg(
+@@ -96,6 +100,10 @@ class Schedule:
+                 "priority",
+                 "routing-key",
+                 "hrrn",
++                "short-input",
++                "short-remaining",
++                "aged-remaining",
++                "aged-cost",
+             ],
+         ),
+     ] = "fcfs"
+diff --git a/python/sglang/srt/managers/schedule_batch.py b/python/sglang/srt/managers/schedule_batch.py
+index d25c09e..49b5901 100644
+--- a/python/sglang/srt/managers/schedule_batch.py
++++ b/python/sglang/srt/managers/schedule_batch.py
+@@ -54,6 +54,7 @@ ScheduleBatch -> ForwardBatch
+ import copy
+ import dataclasses
+ import logging
++from sglang.srt.managers.scheduler_lab import measured_match
+ import re
+ import sys
+ from array import array
+@@ -1437,6 +1438,7 @@ class Req(ReqDllmMixin):
+         else:
+             self.full_untruncated_fill_ids = self.origin_input_ids + self.output_ids
+ 
++    @measured_match("admission")
+     def init_next_round_input(
+         self,
+         tree_cache: Optional[BasePrefixCache] = None,
+diff --git a/python/sglang/srt/managers/schedule_policy.py b/python/sglang/srt/managers/schedule_policy.py
+index 1b884b6..a6cb77d 100644
+--- a/python/sglang/srt/managers/schedule_policy.py
++++ b/python/sglang/srt/managers/schedule_policy.py
+@@ -1,6 +1,8 @@
+ from __future__ import annotations
+ 
+ import logging
++import time
++from sglang.srt.managers.scheduler_lab import POLICIES, RemainingPolicy, trace, measured, measured_match
+ from array import array
+ 
+ from sglang.srt.environ import envs
+@@ -139,6 +141,7 @@ def estimate_prefill_extend_tile_metrics(
+     }
+ 
+ 
++@measured_match("scoring")
+ def match_prefix_for_req(
+     tree_cache: BasePrefixCache,
+     req: Req,
+@@ -213,6 +216,10 @@ class CacheAwarePolicy(Enum):
+ class CacheAgnosticPolicy(Enum):
+     """Scheduling policies that are not aware of the tree cache."""
+ 
++    SHORT_INPUT = "short-input"
++    SHORT_REMAINING = "short-remaining"
++    AGED_REMAINING = "aged-remaining"
++    AGED_COST = "aged-cost"
+     FCFS = "fcfs"  # first come first serve
+     LOF = "lof"  # longest output first
+     RANDOM = "random"
+@@ -231,6 +238,11 @@ class SchedulePolicy:
+         schedule_low_priority_values_first: bool,
+     ):
+         self.policy = self._validate_and_adjust_policy(policy, tree_cache)
++        trace.directory = get_schedule().schedule_trace_dir
++        self.lab_policy = RemainingPolicy(
++            policy, get_schedule().schedule_candidate_limit,
++            get_schedule().schedule_aging_threshold_ms, get_schedule().schedule_cost_model,
++        ) if policy in POLICIES else None
+         self.tree_cache = tree_cache
+         self.enable_hierarchical_cache = enable_hierarchical_cache
+         self.enable_priority_scheduling = enable_priority_scheduling
+@@ -240,12 +252,24 @@ class SchedulePolicy:
+         # It is used to find the matching prefix for in-batch prefix caching.
+         self.waiting_queue_radix_tree = RadixCache.create_simulated()
+ 
++    @measured("priority")
+     def calc_priority(
+         self,
+         waiting_queue: List[Req],
+         running_batch: Optional[ScheduleBatch] = None,
+         processed_tokens: int = 0,
+     ) -> None:
++        if self.lab_policy is not None:
++            def match(req):
++                if getattr(self.tree_cache, "disable", False):
++                    return 0
++                match_prefix_for_req(self.tree_cache, req, include_req=True)
++                return len(req.prefix_indices)
++            candidates, aged = self.lab_policy.order(waiting_queue, match)
++            if trace.directory:
++                trace.calls.append(dict(kind="candidates", start_s=time.perf_counter(),
++                                        candidates=candidates, aged=aged, queue_len=len(waiting_queue)))
++            return
+         policy = self._determine_active_policy(waiting_queue)
+ 
+         # Populate req.num_matched_prefix_tokens at schedule time. Cache-aware policies
+@@ -314,6 +338,8 @@ class SchedulePolicy:
+         return self.policy
+ 
+     def waiting_queue_prefix_matched(self, waiting_queue: List[Req]) -> bool:
++        if self.lab_policy is not None:
++            return False
+         policy = self._determine_active_policy(waiting_queue)
+         return (
+             isinstance(policy, CacheAwarePolicy)
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+index 25619df..fdb3ea0 100644
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -14,6 +14,7 @@
+ """A scheduler that manages a tensor parallel GPU worker."""
+ 
+ import dataclasses
++from sglang.srt.managers.scheduler_lab import trace, measured
+ import faulthandler
+ import logging
+ import math
+@@ -3154,6 +3155,7 @@ class Scheduler(
+             self._prefetch_kvcache(req)
+             self.waiting_queue.append(req)
+             req.time_stats.set_wait_queue_entry_time()
++            trace.enqueue(req, is_retracted)
+             req.arrival_processed_tokens = self.processed_tokens_counter
+         elif self.disaggregation_mode == DisaggregationMode.PREFILL:
+             self._prefetch_kvcache(req)
+@@ -3690,6 +3692,7 @@ class Scheduler(
+ 
+         return NextBatchPlan(batch_to_run=ret, running_batch=running_batch)
+ 
++    @measured("prefill_total")
+     def _get_new_batch_prefill_raw(
+         self,
+         prefill_delayer_single_pass: Optional[PrefillDelayerSinglePassExecutor],
+@@ -3945,6 +3948,7 @@ class Scheduler(
+         if self.chunked_req is not None:
+             self.chunked_req.inflight_middle_chunks += 1
+ 
++        trace.admit(can_run_list)
+         set_time_batch(can_run_list, "set_forward_entry_time")
+ 
+         # Create a new batch
+@@ -4202,6 +4206,8 @@ class Scheduler(
+         pp_proxy_tensors: Optional[PPProxyTensors] = None,
+     ) -> Union[GenerationBatchResult, EmbeddingBatchResult]:
+         """Run a batch."""
++        if trace.calibrate:
++            trace.rids = [req.rid for req in batch.reqs]
+         self.metrics_reporter.record_scheduler_active()
+         self.forward_ct += 1
+         batch.forward_iter = self.forward_ct
+@@ -4964,6 +4970,7 @@ class Scheduler(
+         return success
+ 
+     def get_internal_state(self, recv_req: GetInternalStateReq):
++        trace.dump()
+         # Resolved config (pristine server_args + post-publish overrides) so a
+         # readback reflects values changed via /set_internal_state, not startup.
+         ret = get_context().resolved_server_args_dict()
+diff --git a/python/sglang/srt/managers/scheduler_lab.py b/python/sglang/srt/managers/scheduler_lab.py
+new file mode 100644
+index 0000000..82bd5b9
+--- /dev/null
++++ b/python/sglang/srt/managers/scheduler_lab.py
+@@ -0,0 +1,230 @@
++"""单卡调度实验：排序、内存记录与独立 GPU 标定。"""
++
++import csv
++import heapq
++import json
++import math
++import os
++import time
++from functools import wraps
++from pathlib import Path
++
++POLICIES = {"short-input", "short-remaining", "aged-remaining", "aged-cost"}
++
++
++class RemainingPolicy:
++    def __init__(self, name, limit=64, threshold_ms=500, model_path=None):
++        if limit < 0 or not math.isfinite(threshold_ms) or threshold_ms < 0:
++            raise ValueError("候选数量和等待阈值必须为非负数")
++        self.name, self.limit, self.threshold_ms = name, limit, threshold_ms
++        self.beta = None
++        if name == "aged-cost":
++            if not model_path:
++                raise ValueError("aged-cost 需要 --schedule-cost-model")
++            model = json.loads(Path(model_path).read_text(encoding="utf-8"))
++            self.beta = model["beta"]
++            if len(self.beta) != 3 or any(
++                not math.isfinite(x) or x < 0 for x in self.beta
++            ):
++                raise ValueError("成本模型需要三个非负有限系数")
++            if model["unit"] != "ms":
++                raise ValueError("成本模型单位必须为 ms")
++
++    def order(self, queue, match, now=None):
++        now = time.perf_counter() if now is None else now
++        aged, ordinary = [], []
++        for req in queue:
++            target = (
++                aged
++                if self.name.startswith("aged-")
++                and (
++                    (now - req.time_stats.wait_queue_entry_time) * 1000
++                    >= self.threshold_ms
++                )
++                else ordinary
++            )
++            target.append(req)
++        arrival = lambda r: r.lab_arrival_seq
++        candidates = (
++            heapq.nsmallest(self.limit, ordinary, key=arrival)
++            if self.limit
++            else ordinary
++        )
++        chosen = {id(r) for r in candidates}
++        tail = [r for r in ordinary if id(r) not in chosen]
++        scores = {}
++        for req in candidates:
++            if self.name == "short-input":
++                cost = len(req.origin_input_ids)
++            else:
++                length = len(req.origin_input_ids) + len(req.output_ids)
++                hit = min(match(req), req._compute_max_prefix_len(length))
++                remaining = max(0, length - hit)
++                cost = (
++                    remaining
++                    if self.beta is None
++                    else (
++                        self.beta[0]
++                        + self.beta[1] * remaining
++                        + self.beta[2]
++                        * (hit * remaining + remaining * (remaining + 1) / 2)
++                    )
++                )
++            scores[id(req)] = cost
++        queue[:] = (
++            sorted(aged, key=arrival)
++            + sorted(candidates, key=lambda r: (scores[id(r)], arrival(r)))
++            + tail
++        )
++        return len(candidates), len(aged)
++
++
++class Trace:
++    def __init__(self):
++        self.directory = None
++        self.requests = {}
++        self.calls = []
++        self.gpu = []
++        self.sequence = 0
++        self.rids = []
++        self.matches = {"scoring": [0, 0.0, 0.0], "admission": [0, 0.0, 0.0]}
++        self.calibrate = os.environ.get("SGLANG_LAB_CALIBRATE") == "1"
++
++    def enqueue(self, req, retracted):
++        req.lab_arrival_seq = self.sequence
++        self.sequence += 1
++        if self.directory:
++            row = self.requests.setdefault(
++                req.rid,
++                dict(
++                    rid=req.rid,
++                    input_tokens=len(req.origin_input_ids),
++                    first_enqueue_s=req.time_stats.wait_queue_entry_time,
++                    first_admit_s=None,
++                    retractions=0,
++                ),
++            )
++            row["retractions"] += int(retracted)
++
++    def admit(self, reqs):
++        if self.directory:
++            now = time.perf_counter()
++            for req in reqs:
++                row = self.requests.get(req.rid)
++                if row is not None and row["first_admit_s"] is None:
++                    row["first_admit_s"] = now
++
++    def dump(self):
++        if not self.directory:
++            return
++        directory = Path(self.directory)
++        directory.mkdir(parents=True, exist_ok=True)
++        (directory / "server-trace.json").write_text(
++            json.dumps({"snapshot_s": time.perf_counter()}) + "\n", encoding="utf-8"
++        )
++        for filename, rows in (
++            ("server-requests.jsonl", self.requests.values()),
++            ("gpu.jsonl", self.gpu),
++        ):
++            with (directory / filename).open("w", encoding="utf-8") as f:
++                for row in rows:
++                    f.write(json.dumps(row) + "\n")
++        if self.calls:
++            fields = sorted({key for row in self.calls for key in row})
++            with (directory / "scheduling.csv").open(
++                "w", newline="", encoding="utf-8"
++            ) as f:
++                writer = csv.DictWriter(f, fieldnames=fields)
++                writer.writeheader()
++                writer.writerows(self.calls)
++
++
++trace = Trace()
++
++
++def measured(kind):
++    def decorate(fn):
++        @wraps(fn)
++        def wrapped(self, *args, **kwargs):
++            if not trace.directory or (
++                kind == "prefill_total"
++                and not self.waiting_queue
++                and self.chunked_req is None
++            ):
++                return fn(self, *args, **kwargs)
++            start, cpu = time.perf_counter(), time.thread_time()
++            queue = args[0] if kind == "priority" else self.waiting_queue
++            row = dict(kind=kind, start_s=start, queue_len=len(queue))
++            previous = {key: value[:] for key, value in trace.matches.items()}
++            if kind == "priority":
++                row["policy"] = self.policy.value
++                row["effective_policy"] = self._determine_active_policy(queue).value
++            try:
++                return fn(self, *args, **kwargs)
++            finally:
++                row.update(
++                    wall_ms=(time.perf_counter() - start) * 1000,
++                    cpu_ms=(time.thread_time() - cpu) * 1000,
++                )
++                for phase, totals in trace.matches.items():
++                    for i, suffix in enumerate(("calls", "wall_ms", "cpu_ms")):
++                        row[f"{phase}_{suffix}"] = totals[i] - previous[phase][i]
++                trace.calls.append(row)
++
++        return wrapped
++
++    return decorate
++
++
++def measured_match(phase):
++    def decorate(fn):
++        @wraps(fn)
++        def wrapped(*args, **kwargs):
++            if not trace.directory:
++                return fn(*args, **kwargs)
++            start, cpu = time.perf_counter(), time.thread_time()
++            try:
++                return fn(*args, **kwargs)
++            finally:
++                totals = trace.matches[phase]
++                totals[0] += 1
++                totals[1] += (time.perf_counter() - start) * 1000
++                totals[2] += (time.thread_time() - cpu) * 1000
++
++        return wrapped
++
++    return decorate
++
++
++def gpu_forward(fn):
++    @wraps(fn)
++    def wrapped(self, forward_batch, *args, **kwargs):
++        if (
++            not trace.calibrate
++            or not trace.rids
++            or not forward_batch.forward_mode.is_extend()
++        ):
++            return fn(self, forward_batch, *args, **kwargs)
++        import torch
++
++        if len(trace.rids) != 1:
++            raise ValueError("GPU 标定只支持独占单请求 prefill")
++        start, end = (
++            torch.cuda.Event(enable_timing=True),
++            torch.cuda.Event(enable_timing=True),
++        )
++        start.record()
++        result = fn(self, forward_batch, *args, **kwargs)
++        end.record()
++        end.synchronize()
++        trace.gpu.append(
++            dict(
++                rid=trace.rids[0],
++                gpu_ms=start.elapsed_time(end),
++                hit=forward_batch.extend_prefix_lens_cpu[0],
++                remaining=forward_batch.extend_seq_lens_cpu[0],
++            )
++        )
++        return result
++
++    return wrapped
+diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
+index 763f6bb..65c3523 100644
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -18,6 +18,7 @@ from __future__ import annotations
+ import contextlib
+ import inspect
+ import logging
++from sglang.srt.managers.scheduler_lab import gpu_forward
+ import time
+ from dataclasses import dataclass
+ from typing import Optional, Union
+@@ -1609,6 +1610,7 @@ class ModelRunner:
+         forward_batch.split_index = next_split_index
+         return ret
+ 
++    @gpu_forward
+     def forward(
+         self,
+         forward_batch: ForwardBatch,
