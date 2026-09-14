@@ -1,8 +1,8 @@
 # 服务器环境记录
 
-记录日期：2026-09-10。
+记录日期：2026-09-14。
 
-本文记录 `sglang-scheduler-lab-v1.0` 在远程服务器上的环境和实验状态。环境准备已完成，首轮探索、两类负载的策略比较以及 `prefix-conflict` 三种子正式重复对照均已执行。
+本文记录 `sglang-scheduler-lab-v1.0` 在远程服务器上的环境和实验状态。环境准备已完成，首轮探索、两类负载的策略比较、候选范围与 trace/no-trace 对照、aging 成本对照、三类补充 workload 和正常文本观察均已执行。
 
 ## 服务器实况
 
@@ -83,12 +83,12 @@ python -m unittest discover -s tests -v
 - PyTorch 能识别 A6000，CUDA 可用。
 - `launch_server --help` 成功，并显示 `short-input`、`short-remaining`、`aged-remaining`、`aged-cost` 以及候选、老化、成本模型和 trace 参数。
 - 项目 11 项单元测试全部通过。
-- 已执行 `experiments/run_case.py`。`mixed-low-reuse` 完成 7 个策略的探索，`prefix-conflict` 完成 7 个策略的探索，并以 `fcfs`、`lpm`、`dfs-weight`、`hrrn`、`short-remaining` 五个策略完成 3 个随机种子的正式重复对照。
-- 已生成客户端明细、服务端请求记录、调度 trace、环境快照和逐轮分析 CSV。GPU 成本标定、候选数四档和 aging 三档消融均已完成；更大样本主比较仍未执行。
+- 已执行 `experiments/run_case.py`。`mixed-low-reuse` 完成 7 个策略的探索，`prefix-conflict` 完成 7 个策略的探索，并以 `fcfs`、`lpm`、`dfs-weight`、`hrrn`、`short-remaining` 五个策略完成两档速率、3 个随机种子的 600 请求正式主比较。
+- 已生成客户端明细、服务端请求记录、调度 trace、环境快照和逐轮分析 CSV。GPU 成本标定、候选数四档、aging 三档、两档速率主比较、三类补充 workload 和正常文本观察均已完成。主比较中 3 轮各有一个瞬时客户端断开，原始记录和同条件重试均已保留。
 - `K=32` 已完成；此前 `K=128` 启动时因服务器已有 Ollama 进程占用约 35.7 GiB 显存而 OOM，失败日志已保留。待 GPU 空闲后已用独立目录成功完成 `K=128`，没有覆盖该失败记录。
 
-## 下一步
+## 当前状态
 
-现有环境直接按 [运行手册](operations-linux.md)第 1 节恢复。先回传原始请求与调度记录解释四个失败，再补 K=128/0 重复、记录开关和更大样本对照；不要重新执行已经完成的安装流程。当前成本模型并未证明相比仅按 R 排序的留出排序优势，在线对照也尚无明确收益，见 [实验进度](experiment-status.md)。
+现有环境按 [运行手册](operations-linux.md)第 1 节恢复即可，不需要重新安装或重复实验。成本模型并未证明相比仅按 R 排序的留出排序优势，在线对照也尚无明确收益；实验完整状态见 [实验进度](experiment-status.md)。
 
-后续产物统一整理并回传至 `results/YYYYMMDD/`。当前 CSV 与标定产物在 `results/20260910/`；原始 `runs/` 据服务器报告已保留，但未完整上传到仓库。首次 K=128 OOM 和 FlashInfer 启动失败日志与正常运行分开保留，不作为成功性能结果。
+后续产物统一整理并回传至 `results/YYYYMMDD/`。历史 CSV、标定产物和原始归档在 `results/20260910/`，主比较和完整原始包在 `results/20260911/`，补齐重试和正常文本观察在 `results/20260914/`。首次 K=128 OOM 和 FlashInfer 启动失败日志与正常运行分开保留，不作为成功性能结果。

@@ -1,6 +1,6 @@
 # Linux 操作手册
 
-更新日期：2026-09-10。当前环境、四种候选和测量工具已在 A6000 实际运行。已有 30 轮每轮 300 请求的性能汇总与成本标定；尚未完成大样本、多负载水平主比较。先阅读 [实验进度](experiment-status.md) 与 [服务器环境](environment.md)，已有服务器从第 1 节恢复，不重装环境或重复应用补丁。
+更新日期：2026-09-14。当前环境、四种候选和测量工具已在 A6000 实际运行。已有 30 轮每轮 300 请求的历史性能汇总、成本标定、两档速率的 600 请求主比较、三类补充 workload 和正常文本观察；手册规定的实验已执行完毕。先阅读 [实验进度](experiment-status.md) 与 [服务器环境](environment.md)，已有服务器从第 1 节恢复，不重装环境或重复应用补丁。
 
 ## 1. 服务器：恢复现有环境
 
@@ -128,17 +128,17 @@ done
 
 如果输入生成代码、环境或运行时段发生变化，重新运行对应 HRRN 和 FCFS，形成同条件比较组。K=0 表示全部普通候选；它不等于无限并发。旧 K=64 已有三种子结果，不必无目的重跑全部矩阵。
 
-记录开销对照：同一输入、同一策略分别运行默认 trace 和 `--no-trace`，使用不同目录，比较客户端 TTFT、吞吐与失败数。关闭 trace 后等待／调度 CPU 指标缺失是预期，不填成 0。此对照尚未执行。
+记录开销对照：同一输入、同一策略分别运行默认 trace 和 `--no-trace`，使用不同目录，比较客户端 TTFT、吞吐与失败数。该对照已完成，结果在 `results/20260911/trace-comparison.csv`；关闭 trace 后等待／调度 CPU 指标缺失是预期，不填成 0。
 
 ## 5. 后续负载、样本与 aging
 
-五个生成器名称为 `mixed-low-reuse`、`prefix-conflict`、`hot-prefix`、`long-wait`、`burst-decode`。当前只有前两个有上传的性能汇总。后面三个分别检验热点复用、持续短流中的长请求等待、突发与长 decode 干扰。
+五个生成器名称为 `mixed-low-reuse`、`prefix-conflict`、`hot-prefix`、`long-wait`、`burst-decode`。五类轨迹均已生成；`hot-prefix`、`long-wait`、`burst-decode` 的代表性结果在 `results/20260911/`，分别检验热点复用、持续短流中的长请求等待、突发与长 decode 干扰。
 
-先在相同负载上探索较低速率，选定有意义的两个负载水平，再决定大样本主比较的最终候选和 K。当前 prefix 的 4 req/s 是严重积压条件，不能当作线上正常工作点。扩大样本时关注成功短请求数；前缀负载每 300 个请求只有约 100 个短请求，整体 3000 条也不等于 3000 条短样本。
+已在相同 `prefix-conflict` 负载上选择 0.5 和 1.0 req/s 两个水平，并完成每个水平 600 请求、3 个 seed 的主比较。4 req/s 的历史轮次仍是严重积压条件，不能当作线上正常工作点。结果解释继续关注成功短请求数；前缀负载每 600 个请求只有约 209–213 个成功短请求，整体请求数不等于短请求样本数。
 
 大样本比较保留 `fcfs/lpm/dfs-weight/hrrn` 四个原生基线、一个选定候选和三个种子。相同 seed 内复用输入、预热与配置；跨 seed 分行报告，不平均 P99 冒充总体 P99。
 
-aging=100/500/1000 ms 已完成单种子探索，三档均接近 FCFS。下一轮应先看实际排队和 `aged` 比例，再选择更有区分度的阈值，不把 500 ms 视为等待承诺。如果为比较纯成本排序而使用高于观察等待尺度的有限阈值，必须说明这轮没有验证 aging 的公平性，并检查是否仍有请求越过阈值。
+aging=100/500/1000 ms 已完成单种子探索，三档均接近 FCFS。为比较纯成本排序，已在 1.0 req/s、K=64 下使用 300000 ms 阈值；`aged-remaining` 候选扫描最大 aged 数为 80，`aged-cost` 为 79，均有大量调用出现 aged。该阈值高于本轮观察等待尺度，本轮没有验证 aging 的公平性。
 
 ## 6. 使用已有成本模型及必要的重标定
 
@@ -172,7 +172,7 @@ python experiments/calibrate.py --run "runs/$RUN" --output "$OUT/calibration/a60
 
 `status=finished` 不代表零失败；同时检查 failed、缺失记录和未准入请求。缺失服务端记录不是等待为零。缓存率使用成功集合实际 cached tokens；排序时命中不等于最终复用量。原生策略回退和请求回退分别报告。
 
-正常文本观察尚无上传结果，可在服务器生成独立轨迹：
+正常文本观察已完成，结果在 `results/20260914/`。生成轨迹时若本地 tokenizer 返回 `BatchEncoding`，应取其 `input_ids` 字段并转换为普通 `list` 后写入 JSON；本项目的最终 `workloads/text-check.jsonl` 已按此格式生成。人工阅读两个 `client.jsonl` 后，3 个请求均成功、有文本和完成原因、无错误。它不混入合成性能主表，不把逐字相同设成性能实验条件。
 
 ```bash
 python - <<'PY'
@@ -183,6 +183,9 @@ questions = ['解释 prefill 与 decode 的区别。', '计算 17 乘以 23，�
 with open('workloads/text-check.jsonl', 'w', encoding='utf-8') as f:
     for i, question in enumerate(questions):
         ids = tokenizer.apply_chat_template([{'role': 'user', 'content': question}], add_generation_prompt=True)
+        if hasattr(ids, 'keys'):
+            ids = ids['input_ids']
+        ids = list(ids)
         f.write(json.dumps(dict(rid=f'text-{i}', arrival_s=i, input_ids=ids,
                                 max_new_tokens=256, ignore_eos=False), ensure_ascii=False) + '\n')
 PY
@@ -190,7 +193,7 @@ python experiments/run_case.py --policy fcfs --input workloads/text-check.jsonl 
 python experiments/run_case.py --policy short-remaining --input workloads/text-check.jsonl --output "runs/${DAY}-text-short-remaining"
 ```
 
-人工阅读 `client.jsonl` 的 text、完成原因与错误。它不混入合成性能主表，不把逐字相同设成性能实验条件。
+上述人工检查已完成。它不混入合成性能主表，不把逐字相同设成性能实验条件。
 
 ## 8. 结果回传格式：统一进入 results/当天日期/
 
