@@ -1,6 +1,6 @@
 # Linux 操作手册
 
-更新日期：2026-09-14。当前环境、四种候选和测量工具已在 A6000 实际运行。已有 30 轮每轮 300 请求的历史性能汇总、成本标定、两档速率的 600 请求主比较、三类补充 workload 和正常文本观察；手册规定的实验已执行完毕。先阅读 [实验进度](experiment-status.md) 与 [服务器环境](environment.md)，已有服务器从第 1 节恢复，不重装环境或重复应用补丁。
+更新日期：2026-09-15。当前环境、四种候选和测量工具已在 A6000 实际运行。已有 30 轮每轮 300 请求的历史性能汇总、成本标定、两档速率的 600 请求主比较、三类补充 workload 和正常文本观察；现有汇总已分析，完整记录仍在服务器；下一步先按第 8、9 节补轻量证据。先阅读 [实验进度](experiment-status.md) 与 [服务器环境](environment.md)，已有服务器从第 1 节恢复，不重装环境或重复应用补丁。
 
 ## 1. 服务器：恢复现有环境
 
@@ -106,39 +106,23 @@ python experiments/analyze.py "runs/$RUN" --output "$OUT/$RUN.csv" --plot
 
 `run_case` 不会自动执行分析和回传。工具不会自动按日期改写默认输出位置，因此分析和标定命令始终显式指定 `--output "$OUT/..."`，不要省略后写到 results 根目录。分析需使用完整运行目录，不能拿两行汇总 CSV 代替请求明细重新计算 P99。`--plot` 生成总览图以及等待／吞吐和队列／CPU 关系图。
 
-## 4. 优先补齐已有实验的证据
+## 4. 当前优先事项：导出现有证据
 
-先按第 8 节回传现有运行目录，包含四个失败请求所在轮次、K=128 启动 OOM 目录、成功重试和标定目录。核对 `client.jsonl` 的错误、`rid` 与服务端记录，查看 `scheduling.csv` 的 `aged`、候选数和队列长度。
+先执行第 8、9 节，导出已有运行目录中的逐请求标量、调度摘要和错误片段。覆盖 20260910 历史轮次及标定、20260911 主比较与 aging 对照、20260914 五次性能重试及两次正常文本观察；失败和启动失败目录也保留导出结果。
 
-优先补 K=128、全候选在 seed=2/3 的重复；每个 seed 的输入和预热文件必须与相应已有对照相同。若服务器已保留轨迹，直接使用；下面仅演示新生成的文件名，不用新文件替换后再声称复用了旧输入：
+K=128/0 的 seed=2/3、300 请求、4 req/s 重复已经完成，不再重跑。K=64 的 trace/no-trace 单轮对照也已完成，短请求 P99 差约 0.12%；该结论不外推到 K=0。FCFS 原始轮及三次同条件重试各有断开，先分析错误请求及相邻发送时间、服务端关联与日志，不继续重复同一命令等待成功。
 
-```bash
-for SEED in 2 3; do
-  INPUT="workloads/prefix-r4-s${SEED}.jsonl"
-  python experiments/generate_workload.py --workload prefix-conflict \
-    --count 300 --rate 4 --seed "$SEED" --output "$INPUT"
-  for K in 128 0; do
-    RUN="${DAY}-short-remaining-prefix-r4-s${SEED}-k${K}"
-    python experiments/run_case.py --policy short-remaining --candidates "$K" \
-      --input "$INPUT" --output "runs/$RUN" --request-timeout 1800
-    python experiments/analyze.py "runs/$RUN" --output "$OUT/$RUN.csv"
-  done
-done
-```
-
-如果输入生成代码、环境或运行时段发生变化，重新运行对应 HRRN 和 FCFS，形成同条件比较组。K=0 表示全部普通候选；它不等于无限并发。旧 K=64 已有三种子结果，不必无目的重跑全部矩阵。
-
-记录开销对照：同一输入、同一策略分别运行默认 trace 和 `--no-trace`，使用不同目录，比较客户端 TTFT、吞吐与失败数。该对照已完成，结果在 `results/20260911/trace-comparison.csv`；关闭 trace 后等待／调度 CPU 指标缺失是预期，不填成 0。
+先补证据，再决定纯成本排序、公平性压力和第二种 workload 正式重复的具体参数。第 3、5、6 节是后续运行方法，不表示现在需要把已做矩阵重新执行。
 
 ## 5. 后续负载、样本与 aging
 
-五个生成器名称为 `mixed-low-reuse`、`prefix-conflict`、`hot-prefix`、`long-wait`、`burst-decode`。五类轨迹均已生成；`hot-prefix`、`long-wait`、`burst-decode` 的代表性结果在 `results/20260911/`，分别检验热点复用、持续短流中的长请求等待、突发与长 decode 干扰。
+五个生成器名称为 `mixed-low-reuse`、`prefix-conflict`、`hot-prefix`、`long-wait`、`burst-decode`。五类轨迹均已生成；`hot-prefix`、`long-wait`、`burst-decode` 的代表性结果在 `results/20260911/`，用于观察热点复用、长请求等待、突发与长 decode 干扰。实际 long-wait 的长等待最大值只有 0.33/0.45 ms，未形成公平性压力；三类各仅一个 seed、两个策略。
 
 已在相同 `prefix-conflict` 负载上选择 0.5 和 1.0 req/s 两个水平，并完成每个水平 600 请求、3 个 seed 的主比较。4 req/s 的历史轮次仍是严重积压条件，不能当作线上正常工作点。结果解释继续关注成功短请求数；前缀负载每 600 个请求只有约 209–213 个成功短请求，整体请求数不等于短请求样本数。
 
 大样本比较保留 `fcfs/lpm/dfs-weight/hrrn` 四个原生基线、一个选定候选和三个种子。相同 seed 内复用输入、预热与配置；跨 seed 分行报告，不平均 P99 冒充总体 P99。
 
-aging=100/500/1000 ms 已完成单种子探索，三档均接近 FCFS。为比较纯成本排序，已在 1.0 req/s、K=64 下使用 300000 ms 阈值；`aged-remaining` 候选扫描最大 aged 数为 80，`aged-cost` 为 79，均有大量调用出现 aged。该阈值高于本轮观察等待尺度，本轮没有验证 aging 的公平性。
+aging=100/500/1000 ms 已完成单种子探索，三档均接近 FCFS。此前尝试分离成本排序，在 1.0 req/s、K=64 下使用 300000 ms 阈值；`aged-remaining` 候选扫描最大 aged 数为 80，`aged-cost` 为 79，均有大量调用出现 aged。但最大长等待约 427 秒，高于 300 秒阈值，约 41.6% 候选扫描出现 aged（服务器报告，待导出核对）。因此它是成本与 aging 混合对照，既非纯成本排序，也不能证明等待上界。后续同 K、同输入、同阈值比较，须查看实际 aged=0 才能作纯排序解释；不凭阈值看起来很大就认定已关闭 aging。
 
 ## 6. 使用已有成本模型及必要的重标定
 
@@ -172,7 +156,7 @@ python experiments/calibrate.py --run "runs/$RUN" --output "$OUT/calibration/a60
 
 `status=finished` 不代表零失败；同时检查 failed、缺失记录和未准入请求。缺失服务端记录不是等待为零。缓存率使用成功集合实际 cached tokens；排序时命中不等于最终复用量。原生策略回退和请求回退分别报告。
 
-正常文本观察已完成，结果在 `results/20260914/`。生成轨迹时若本地 tokenizer 返回 `BatchEncoding`，应取其 `input_ids` 字段并转换为普通 `list` 后写入 JSON；本项目的最终 `workloads/text-check.jsonl` 已按此格式生成。人工阅读两个 `client.jsonl` 后，3 个请求均成功、有文本和完成原因、无错误。它不混入合成性能主表，不把逐字相同设成性能实验条件。
+正常文本观察已完成，结果在 `results/20260914/`。生成轨迹时若本地 tokenizer 返回 `BatchEncoding`，应取其 `input_ids` 字段并转换为普通 `list` 后写入 JSON；本项目的最终 `workloads/text-check.jsonl` 已按此格式生成。服务器报告人工阅读两个 `client.jsonl` 后每轮 3 个请求均成功、有文本和完成原因、无错误；本地尚缺正文，按第 8 节保留 text 导出即可，无需重跑。它不混入合成性能主表，不把逐字相同设成性能实验条件。
 
 ```bash
 python - <<'PY'
@@ -190,78 +174,108 @@ with open('workloads/text-check.jsonl', 'w', encoding='utf-8') as f:
                                 max_new_tokens=256, ignore_eos=False), ensure_ascii=False) + '\n')
 PY
 python experiments/run_case.py --policy fcfs --input workloads/text-check.jsonl --output "runs/${DAY}-text-fcfs"
-python experiments/run_case.py --policy short-remaining --input workloads/text-check.jsonl --output "runs/${DAY}-text-short-remaining"
+python experiments/run_case.py --policy short-remaining --candidates 0 --input workloads/text-check.jsonl --output "runs/${DAY}-text-short-remaining"
 ```
 
-上述人工检查已完成。它不混入合成性能主表，不把逐字相同设成性能实验条件。
+上述命令供需要新增文本观察时使用；已有两轮仅需导出正文。它不混入合成性能主表，不把逐字相同设成性能实验条件。
 
-## 8. 结果回传格式：统一进入 results/当天日期/
+## 8. 服务器补轻量证据：results/当天日期/
 
-**服务器整理、Linux 登录设备接收、Windows 接收与 GitHub 上传，都保留 `results/YYYYMMDD/` 层级。** 当前已存在 `results/20260909/` 与 `results/20260910/`；历史结果保持原日期，后续产物放入实际回传当天的新目录。运行原始数据仍先生成在服务器 `runs/<run_id>/`，不需要改脚本。
+**服务器整理、Linux 登录设备接收、Windows 分析与 GitHub 上传，都保留 `results/YYYYMMDD/` 层级。** 日期取本次整理当天北京时间；旧运行的 run_id 不变，原始实验时间仍读各轮记录。完整 token 输入、预热轨迹和完整日志保留服务器 `runs/<run_id>/`，本次只传轻量证据。
 
-建议每个日期目录包含：
-
-```text
-results/YYYYMMDD/
-  README.md                         # 本批次运行清单、问题、结论与缺失文件
-  <run_id>.csv                      # 每轮汇总，一行一轮
-  comparison.csv                    # 可选，同条件比较组
-  *.png                             # 分析图，标明对应运行
-  calibration/
-    a6000-cost*.json                 # 有本次标定时提供
-    a6000-cost*.samples.jsonl
-  config-used.json                   # 本批次配置副本；每轮 run.json 为实际参数依据
-  environment-packages.txt
-  project-working.diff
-  upstream-working.diff
-  server-source-commit.txt
-  raw/
-    <run_id>.tar.gz                  # 一轮一个包，包含 runs/<run_id>/ 完整目录
-```
-
-已有 `20260910/` 的 CSV、标定模型和样本保留现有文件名，不要求为了新格式改名。历史目录里的面试提纲可继续保留。
-
-原始包应包含实际生成的文件：`run.json`、`input.jsonl`、`input.meta.json`（若有）、`warmup.jsonl`（若有）、`client.jsonl`、`server-requests.jsonl`、`server-trace.json`、`scheduling.csv`、`server-info.json`、`server.log`、环境快照和 `summary.json`。标定轮另带 `calibration-input.jsonl`、`calibration-client.jsonl` 与 `gpu.jsonl`。失败轮按现有内容打包，并在日期 README 说明缺失；不造空文件补齐。
-
-只传 CSV 无法定位失败请求、重算分位数或检查 aging 分支；所以原始包与对应输入一并回传。这里是文件组织约定，不增加哈希、门禁或新验证框架。
-
-服务器示例，每完成一轮整理一次：
-
-```bash
-mkdir -p "$OUT/raw"
-python experiments/analyze.py "runs/$RUN" --output "$OUT/$RUN.csv"
-tar -czf "$OUT/raw/$RUN.tar.gz" "runs/$RUN"
-cp configs/a6000.json "$OUT/config-used.json"
-python -m pip freeze > "$OUT/environment-packages.txt"
-git -C upstream/sglang log -1 --oneline > "$OUT/server-source-commit.txt"
-git -C upstream/sglang diff > "$OUT/upstream-working.diff"
-git diff > "$OUT/project-working.diff"
-```
-
-`RUN` 使用本节之前实际运行的目录名。启动失败轮没有请求文件或标定轮没有普通 input.jsonl 时，跳过通用 analyze 命令，直接打包该目录。项目没有 Git 时略过最后一行，并在日期 README 说明；Git diff 不包含未跟踪文件，如有新实验脚本，另将实际文件副本放进日期目录的 `code/`。
-
-为日期目录写一份简短 README：列出 run_id、工作负载、种子、rate、K、阈值、完成／失败状态、用途、原始包名和已知缺失。不要把本轮失败覆盖成成功重试。一天多批回传沿用同一日期目录，但每个运行使用不同 run_id；配置发生变化时另存命名副本，实际值仍以各轮 run.json 为准。
-
-## 9. 登录设备接收与发布
-
-在登录设备的项目根目录执行；`DAY` 填服务器本批次选定的日期，不重新用接收设备日期猜测：
+先在联网 Linux 登录设备下载仓库最新版本，从项目根目录把导出工具传到已有服务器工作区。设置实际服务器地址：
 
 ```bash
 SERVER=user@your-server
 REMOTE=/mnt_d/huangxiaoyuan/sglang-scheduler-lab-v1.0
-DAY=20260910
-mkdir -p "results/$DAY"
-rsync -a --info=progress2 "$SERVER:$REMOTE/results/$DAY/" "results/$DAY/"
+scp experiments/export_evidence.py "$SERVER:$REMOTE/experiments/"
 ```
 
-没有 rsync 时：
+工具使用 Python 标准库和服务器已有的 `experiments/common.py`，不安装依赖、不改 SGLang 补丁、不启动 GPU 实验。进入服务器后，恢复第 1 节环境；在实验结束后导出现有运行目录：
 
 ```bash
-scp -r "$SERVER:$REMOTE/results/$DAY/." "results/$DAY/"
+cd /mnt_d/huangxiaoyuan/sglang-scheduler-lab-v1.0
+source .venv/bin/activate
+DAY=$(TZ=Asia/Shanghai date +%Y%m%d)
+OUT="results/$DAY"
+mkdir -p "$OUT/evidence"
+# 每个一级运行目录分别导出；包括失败、启动失败和标定目录。
+for RUN_DIR in runs/*/; do
+  python experiments/export_evidence.py "$RUN_DIR" --output "$OUT/evidence" || break
+done
+# 两轮文本观察另保留回答正文，更新对应的轻量文件。
+python experiments/export_evidence.py \
+  runs/20260914-text-fcfs runs/20260914-text-short-remaining \
+  --output "$OUT/evidence" --include-text
 ```
 
-已有完整包可以解压到另一个分析目录，再把原始运行目录传给 analyze；不要把多轮 client.jsonl 混在一起覆盖。复制到 Windows 时同样保留 `results/$DAY/`。
+`runs/*/` 只匹配一级目录。也可把上述循环换成一条具体目录命令，例如 `python experiments/export_evidence.py runs/20260914-main-prefix-r05-s2-fcfs-n600-retry1 --output "$OUT/evidence"`。若读到损坏记录而报错，保留报错与目录名，处理该目录后继续其余目录，不把未导出轮次写成已完成。
 
-GitHub 网页端提交时目标目录也是 `results/$DAY/`。如果原始包超过网页上传限制，在本地日期目录保留完整包，在该日期 README 说明尚未上传哪些文件以及原始副本保存位置；上传汇总表不等于原始证据已收齐。模型权重和离线 wheel 不属于实验结果回传包。
+每轮输出如下，不包含 token 数组：
 
-服务器与登录设备不承担 GitHub push；本地 Windows 已能推送，但发布仍不是启动下一轮实验的前提。
+```text
+results/YYYYMMDD/
+  README.md
+  evidence/<run_id>/
+    export-info.json             # 来源、存在／缺失文件、请求数、日志截断情况
+    requests.jsonl               # rid、原始长度、发送/首 token/入队/准入时间等标量
+    failed-requests.jsonl        # 失败或缺失客户端的请求；成功轮可为空
+    scheduling-summary.json     # 按 kind 分别统计 CPU/耗时/队列/候选/aged
+    scheduling-timeline.jsonl   # 每 10 秒、按 kind 分开的时间桶
+    log-excerpts.txt             # 错误及失败 rid 周边片段，最多 300 行
+    run.json                    # 以下文件仅在源目录实际存在时复制
+    summary.json
+    server-info.json
+    server-trace.json
+    input.meta.json
+    cost-model.json
+    gpu.jsonl
+    environment-gpu.txt
+    environment-packages.txt
+  config-used.json
+  environment-packages.txt
+  server-source-commit.txt
+  upstream-working.diff
+```
+
+`requests.jsonl` 以实际输入的 rid 关联客户端与服务端记录，保留失败和缺失标记、完成原因、cached tokens、生成 token 数与首次等待。普通运行不保留回答正文；`--include-text` 仅用于上述正常文本观察。输入缺失时使用已有客户端／服务端 rid，并在 `export-info.json` 明示，不能声称已经知道完整计划集合。
+
+`scheduling-summary.json` 优先使用 `run.json` 中计时窗口，否则统计现有记录并标为 `available_record`；按 `kind` 分开报告，嵌套 CPU 不能相加。`aged_call_fraction` 是出现 aged 的候选扫描调用占比，不是超阈值请求比例，也不是延迟上界。no-trace 或启动失败缺少调度数据时 `available=false`，不能解读为零开销。10 秒桶只用于观察时间变化，不是逐次调度回放。
+
+日志仅保留错误及失败 rid 前后 3 行，每行最多 1000 字符，并标明截断。片段不足以定位原因时，在服务器继续查看完整日志，将相关时段另存小型文本说明。没有匹配到片段不代表服务没有错误。导出工具不会重新计算主比较表；现有 CSV 继续使用，新实验在完整运行目录上调用 `analyze.py`。
+
+补本次环境信息：
+
+```bash
+cp configs/a6000.json "$OUT/config-used.json"
+python -m pip freeze > "$OUT/environment-packages.txt"
+git -C upstream/sglang log -1 --oneline > "$OUT/server-source-commit.txt"
+git -C upstream/sglang diff > "$OUT/upstream-working.diff"
+```
+
+这些是导出当天的环境快照；历史参数以各轮 `run.json` 为准。历史日期目录已有的成本模型、320 条标定样本和逐轮 CSV 不用重复复制。若运行使用了未跟踪的新脚本，把实际文件副本放入当天目录的 `code/`。
+
+在当天 `README.md` 写明本次导出的 run_id、对应历史日期、完整目录所在服务器路径、未导出或缺失的文件、导出报错与需要解释的问题。优先说明四次 FCFS 的失败 rid 和日志片段、两个 300 秒 aging 对照、K=0 主比较、启动失败、标定和两轮文本观察。不得把轻量摘要写成完整调度轨迹已回传；它能支持请求分位数与 aged 计数核对，不能恢复完整 token 输入或每次候选顺序。
+
+## 9. 登录设备接收并通过 GitHub 网页提交
+
+在登录设备项目根目录执行。`DAY` 填服务器刚才实际选定的日期；以下 20260915 是示例，后续操作替换为当天值：
+
+```bash
+SERVER=user@your-server
+REMOTE=/mnt_d/huangxiaoyuan/sglang-scheduler-lab-v1.0
+DAY=20260915
+mkdir -p "results/$DAY/evidence"
+rsync -a --info=progress2 "$SERVER:$REMOTE/results/$DAY/evidence/" "results/$DAY/evidence/"
+scp "$SERVER:$REMOTE/results/$DAY/README.md" \
+  "$SERVER:$REMOTE/results/$DAY/config-used.json" \
+  "$SERVER:$REMOTE/results/$DAY/environment-packages.txt" \
+  "$SERVER:$REMOTE/results/$DAY/server-source-commit.txt" \
+  "$SERVER:$REMOTE/results/$DAY/upstream-working.diff" "results/$DAY/"
+```
+
+没有 rsync 时，用 `scp -r "$SERVER:$REMOTE/results/$DAY/evidence" "results/$DAY/"` 替换 rsync 行。有本次新增 CSV、图、标定模型或 `code/` 时，按文件名另行复制到同一天目录；保留原来的 run_id，不覆盖历史失败轮。完整运行数据继续留在服务器。
+
+GitHub 网页端进入 `results/$DAY/` 后，用 Add file → Upload files 上传该目录中的轻量文件及 `evidence/` 文件夹。数量较多时按运行目录分批上传，每批仍保持 `results/$DAY/evidence/<run_id>/` 层级；README 记录已上传与待补轮次。Windows 接收副本时保留相同层级。
+
+服务器与登录设备不承担 GitHub push；本地 Windows 可提交推送项目代码与文档。发布不是启动实验的前置条件。

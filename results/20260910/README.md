@@ -6,8 +6,8 @@
 
 ## 原始归档
 
-- 已收到：下表逐轮 CSV、`calibration/` 下的模型及正式样本，以及 `raw/` 下 36 个原始归档包。
-- 36 个归档覆盖本目录 30 条性能汇总、`calibration-a6000-r1` 标定轮，以及服务器保留的重试、失败和启动尝试；早期 `first-run` 与后续运行目录的命名不完全一致，不能仅按文件名机械一一对应。归档包内保留服务器上的 `runs/<run_id>/` 路径，包含实际存在的输入、预热、客户端与服务端记录、调度 trace、日志和环境快照；启动失败目录没有人为补造 `run.json`。
+- 已收到：下表逐轮 CSV、`calibration/` 下的模型及正式样本，原始归档体积过大未上传，尚未在本地核验。
+- 据服务器说明，36 个归档覆盖本目录 30 条性能汇总、`calibration-a6000-r1` 标定轮，以及服务器保留的重试、失败和启动尝试；早期 `first-run` 与后续运行目录的命名不完全一致，不能仅按文件名机械一一对应。归档包内保留服务器上的 `runs/<run_id>/` 路径，包含实际存在的输入、预热、客户端与服务端记录、调度 trace、日志和环境快照；启动失败目录没有人为补造 `run.json`。
 - `dfs-weight-mixed-r1-s1.tar.gz` 与 `dfs-weight-mixed-r1-s1-retry1.tar.gz` 没有 `run.json`，保留其启动失败证据；`short-remaining-prefix-r4-s1-k128.tar.gz` 保留首次 K=128 OOM 目录，成功重试使用独立的 `short-remaining-prefix-r4-s1-k128-retry1` 包。
 - `first-run`、`short-input-mixed-r1-s1`、`short-remaining-mixed-r1-s1`、`hrrn-prefix-r4-s1` 各有 1 个失败请求；对应客户端错误、服务端缺失记录和日志均保留，不能把汇总 CSV 解读为所有请求成功。
 - 本目录不包含模型权重、`.venv` 或离线 wheel。服务器仍保留未压缩的原始 `runs/` 目录。

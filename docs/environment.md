@@ -84,11 +84,13 @@ python -m unittest discover -s tests -v
 - `launch_server --help` 成功，并显示 `short-input`、`short-remaining`、`aged-remaining`、`aged-cost` 以及候选、老化、成本模型和 trace 参数。
 - 项目 11 项单元测试全部通过。
 - 已执行 `experiments/run_case.py`。`mixed-low-reuse` 完成 7 个策略的探索，`prefix-conflict` 完成 7 个策略的探索，并以 `fcfs`、`lpm`、`dfs-weight`、`hrrn`、`short-remaining` 五个策略完成两档速率、3 个随机种子的 600 请求正式主比较。
-- 已生成客户端明细、服务端请求记录、调度 trace、环境快照和逐轮分析 CSV。GPU 成本标定、候选数四档、aging 三档、两档速率主比较、三类补充 workload 和正常文本观察均已完成。主比较中 3 轮各有一个瞬时客户端断开，原始记录和同条件重试均已保留。
+- 已生成客户端明细、服务端请求记录、调度 trace、环境快照和逐轮分析 CSV。GPU 成本标定、候选数四档、aging 三档、两档速率主比较、三类补充 workload 和正常文本观察均已完成。主比较中 3 轮各有一个客户端断开（根因待查），原始记录和同条件重试均已保留。
 - `K=32` 已完成；此前 `K=128` 启动时因服务器已有 Ollama 进程占用约 35.7 GiB 显存而 OOM，失败日志已保留。待 GPU 空闲后已用独立目录成功完成 `K=128`，没有覆盖该失败记录。
 
 ## 当前状态
 
 现有环境按 [运行手册](operations-linux.md)第 1 节恢复即可，不需要重新安装或重复实验。成本模型并未证明相比仅按 R 排序的留出排序优势，在线对照也尚无明确收益；实验完整状态见 [实验进度](experiment-status.md)。
 
-后续产物统一整理并回传至 `results/YYYYMMDD/`。历史 CSV、标定产物和原始归档在 `results/20260910/`，主比较和完整原始包在 `results/20260911/`，补齐重试和正常文本观察在 `results/20260914/`。首次 K=128 OOM 和 FlashInfer 启动失败日志与正常运行分开保留，不作为成功性能结果。
+后续产物统一整理并回传至 `results/YYYYMMDD/`。历史 CSV 与标定产物在 `results/20260910/`，主比较汇总在 `results/20260911/`，补齐重试和正常文本观察在 `results/20260914/`。首次 K=128 OOM 和 FlashInfer 启动失败日志与正常运行分开保留，不作为成功性能结果。
+
+完整运行目录保留在服务器，未上传的大体积归档不计为本地已核验证据。后续按操作手册导出逐请求标量、调度摘要和错误片段，回传至当天日期目录。

@@ -1,6 +1,6 @@
 # SGLang 调度实验：项目设计
 
-更新日期：2026-09-10。本文把已认可的策略方向细化为实现与实验设计；当前配置已用于远程阶段性实验；最优参数和大样本结论尚未确定。执行顺序见[实现计划](implementation-plan.md)，术语以[共同语言](../CONTEXT.md)为准，原生行为的依据见[调研文档](scheduling-research.md)。
+更新日期：2026-09-15。本文把已认可的策略方向细化为实现与实验设计；当前配置已用于远程阶段性实验；最优参数和大样本结论尚未确定。执行顺序见[实现计划](implementation-plan.md)，术语以[共同语言](../CONTEXT.md)为准，原生行为的依据见[调研文档](scheduling-research.md)。
 
 ## 实现落地说明
 
@@ -299,6 +299,7 @@ sglang-scheduler-lab/
     replay.py
     calibrate.py
     analyze.py
+    export_evidence.py
   runs/<run_id>/
     run.json
     input.jsonl
@@ -312,7 +313,7 @@ sglang-scheduler-lab/
     calibration/
     comparison.csv
     figures/
-    raw/<run_id>.tar.gz     # 保留 runs/<run_id>/ 完整目录
+    evidence/<run_id>/      # 逐请求标量、调度摘要、错误片段与配置
   upstream/                 # 完整 SGLang 工作副本，不提交
 ```
 
@@ -320,7 +321,7 @@ sglang-scheduler-lab/
 
 `run_case.py` 负责单个案例：使用本地模型启动本轮服务、建立规定缓存状态、回放有限轨迹、收集结果并正常结束自己启动的服务。第一版不建设任务队列、失败自动重试平台或批量调参系统；多个案例可由明确的命令列表顺序运行。
 
-Linux 登录设备下载源码、模型、tokenizer 和匹配服务器的 Python／CUDA 依赖，连同项目文件传入服务器。在服务器使用本地 Git 记录上游修改，运行产物传回 Linux 登录设备，再提供 Windows 分析副本。GitHub 由操作者在网页端手动上传提交，发布不影响实验启动。
+Linux 登录设备下载源码、模型、tokenizer 和匹配服务器的 Python／CUDA 依赖，连同项目文件传入服务器。在服务器使用本地 Git 记录上游修改，完整输入和日志保留服务器，轻量证据传回 Linux 登录设备，再提供 Windows 分析副本。GitHub 由操作者在网页端手动上传提交，发布不影响实验启动。
 
 如果登录设备的 Python ABI 或平台与服务器不同，下载与打包应以服务器为目标；JIT 所需工具或预编译缓存也一并准备。具体安装文件清单在环境准备阶段形成，当前不创建无法运行的占位安装脚本。
 
@@ -356,3 +357,9 @@ Linux 登录设备下载源码、模型、tokenizer 和匹配服务器的 Python
 [ref-attention]: https://docs.sglang.io/docs/advanced_features/attention_backend
 [ref-load]: https://github.com/sgl-project/sglang/blob/0027af2eace5ccc2116c8c993ce71aebf1535264/python/sglang/srt/managers/scheduler_components/load_inquirer.py#L80-L95
 [ref-io]: https://github.com/sgl-project/sglang/blob/0027af2eace5ccc2116c8c993ce71aebf1535264/python/sglang/srt/managers/io_struct.py#L173-L188
+
+## 12. 2026-09-15 实验反馈
+
+当前主比较是一个 workload（`prefix-conflict`）、两个速率、三个种子、五种策略，共 30 轮，每轮 600 请求。第二个 workload 的同规模正式矩阵和分块对照尚未完成，早期样本预算不代表实际执行量。K=0 的短请求收益已在该矩阵出现，但低速率长请求最大等待增加，不能作为公平性保证。300000 ms 的 aging 对照仍触发提升分支，不满足纯成本排序解释；具体数值与后续优先级见 [实验进度](experiment-status.md)。
+
+轻量证据由 `export_evidence.py` 读取现有运行目录生成，不启动 GPU 实验。保留每个请求的 rid、原始长度、时间、成功状态、错误和缓存量，以及按 kind 分开的调度统计和配置；缺失记录保持缺失。省略 token 数组、普通回答正文和完整日志。原始数据仍是服务器重算与精确回放的依据，轻量摘要不能还原每一次调度顺序。
