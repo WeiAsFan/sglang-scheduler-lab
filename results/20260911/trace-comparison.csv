@@ -1,0 +1,3 @@
+run,seed,candidate_limit,trace_enabled,duration_s,cache_hit_rate,output_tokens_per_s,failed,succeeded,short_successes,short_ttft_p95_ms,short_ttft_p99_ms
+runs/20260911-trace-prefix-r4-s2-short-remaining-k64,2,64,true,566.223026978,0.374048037,67.817800002,0,300,99,201092.784127,227554.446595
+runs/20260911-no-trace-prefix-r4-s2-short-remaining-k64,2,64,false,565.944811365,0.374048037,67.851138890,0,300,99,200819.362026,227288.062804
